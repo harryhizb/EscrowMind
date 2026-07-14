@@ -65,6 +65,7 @@ function MilestonePanel({ milestone, vaultAddress, isClient, isFreelancer, check
 
   const state = Number(milestone.state);
   const isDeadlinePassed = Date.now() / 1000 > Number(deadline);
+  const isArbiter = arbiters?.some(a => a?.toLowerCase() === userAddress?.toLowerCase());
 
   // Read auto-release timestamp for this milestone
   const { data: autoReleaseTimestamp } = useReadContract({
@@ -105,7 +106,6 @@ function MilestonePanel({ milestone, vaultAddress, isClient, isFreelancer, check
     query: { refetchInterval: 8000 },
   });
 
-  const isArbiter = arbiters?.some(a => a?.toLowerCase() === userAddress?.toLowerCase());
   const autoReleaseRemaining = autoReleaseTimestamp ? Number(autoReleaseTimestamp) - Date.now() / 1000 : 0;
   const isDisputeWindowElapsed = autoReleaseRemaining <= 0;
 
