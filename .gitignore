@@ -1,0 +1,58 @@
+# Environment Variables (NEVER commit these!)
+.env
+.env.local
+.env.*.local
+.env.production.local
+
+# Dependencies
+node_modules/
+*/node_modules/
+.yarn/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+.nyc_output/
+
+# Production
+dist/
+build/
+out/
+*/dist
+*/build
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Solidity
+cache/
+artifacts/
+
+# Backend specific
+backend/local_ipfs_cache/
+backend/logs/
+
+# Misc
+*.bak
+*.tmp

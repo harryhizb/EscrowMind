@@ -1,0 +1,13 @@
+{
+  "network": "fuji",
+  "chainId": 43113,
+  "contracts": {
+    "EscrowVaultImpl": "0x63ca402246e0eb848cc9ae22542c8220ec27b9de",
+    "CreditManager": "0x67c94c1f87934a2e0aa7da490d5bc4eb1a995dd8",
+    "ReputationSBT": "0x0ea2d88aad9ebe6c1c0ed703d993947200a22276",
+    "EscrowFactory": "0x2f317f780c79d209d9e6006c5a44808e65384159",
+    "JobBoard": "0x9de4fc5e969b6d9b00e0d2ff1bbf7c51ddf35890"
+  },
+  "relayer": "0x1e5beb68e1855b1453fc64a316a8a0e6586418ba",
+  "arbiters": ["0x74c6b90a92c8c2cf8fce51fca0d76d91abf11409","0x19ac61ed8c4c30aae07bb42fa8f9aa5338649294","0xfee96a3b0882d338492d1fbdf31d6820dbb464aa"]
+}
