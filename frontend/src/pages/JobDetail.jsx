@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAccount, useReadContract } from "wagmi";
 import { formatEther } from "viem";
@@ -15,8 +15,9 @@ import SkeletonCard from "../components/SkeletonCard.jsx";
 import Button from "../components/Button.jsx";
 import { downloadFile } from "../utils/filePipeline.js";
 import JobChat from "../components/JobChat.jsx";
+import { bytes32ToCid, parseOnChainNotes } from "../utils/cid.js";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "http://localhost:3001").replace(/\/$/, "");
 const ZERO_BYTES32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const JOB_STATE_LABELS = { 0: "Open", 1: "Assigned", 2: "Closed" };
@@ -41,7 +42,7 @@ function normalizeJobResult(res) {
     return {
       client: res.client,
       checklist: normalizeChecklist(res.checklist),
-      specDocCID: res.specDocCID,
+      specDocCID: bytes32ToCid(res.specDocCID),
       budgetMin: res.budgetMin,
       budgetMax: res.budgetMax,
       deadline: res.deadline,
@@ -53,7 +54,7 @@ function normalizeJobResult(res) {
   return {
     client: res[0],
     checklist: normalizeChecklist(res[1]),
-    specDocCID: res[2],
+    specDocCID: bytes32ToCid(res[2]),
     budgetMin: res[3],
     budgetMax: res[4],
     deadline: res[5],
@@ -69,7 +70,7 @@ function normalizeBid(bid, index) {
     index,
     freelancer: isTuple ? bid[0] : bid.freelancer,
     amount: isTuple ? bid[1] : bid.amount,
-    proposalCID: isTuple ? bid[2] : bid.proposalCID,
+    proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
     estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
     withdrawn: isTuple ? bid[4] : bid.withdrawn,
   };
@@ -162,7 +163,37 @@ export default function JobDetail() {
       }
     });
   };
-  const title = getJobTitle(job, jobId);
+  const [metadata, setMetadata] = useState(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+
+  useEffect(() => {
+    if (!job?.specDocCID || job.specDocCID === ZERO_BYTES32) return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        setMetadataLoading(true);
+        const res = await fetch(`${BACKEND_URL}/metadata/${job.specDocCID}`);
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        if (active) {
+          setMetadata(data);
+        }
+      } catch (err) {
+        console.error("Failed to load spec metadata:", err);
+      } finally {
+        if (active) setMetadataLoading(false);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [job?.specDocCID]);
+
+  const onChainData = useMemo(() => {
+    return parseOnChainNotes(job?.checklist?.extraNotes || "", getJobTitle(job, jobId));
+  }, [job, jobId]);
+
+  const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
+  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || "No extra written description was stored for this job. The structured checklist below is the source of truth.";
 
   /* ── Invalid ID ── */
   if (parsedJobId === null) {
@@ -227,10 +258,14 @@ export default function JobDetail() {
           </span>
           <span className="text-tertiary text-sm">Job #{jobId}</span>
         </div>
-        <h1 className="page-title mb-2">{title}</h1>
-        <p className="text-secondary" style={{ lineHeight: 1.7, maxWidth: 680 }}>
-          {job.checklist.extraNotes || "No extra written description was stored for this job. The structured checklist below is the source of truth."}
-        </p>
+        <h1 className="page-title mb-2">{displayTitle}</h1>
+        {metadataLoading ? (
+          <p className="text-secondary animate-pulse">Loading description from IPFS...</p>
+        ) : (
+          <p className="text-secondary" style={{ lineHeight: 1.7, maxWidth: 680 }}>
+            {displayDescription}
+          </p>
+        )}
       </div>
 
       {/* ── Notices ── */}
@@ -293,10 +328,10 @@ export default function JobDetail() {
                 </div>
               </div>
 
-              {job.checklist.extraNotes && (
+              {onChainData.notes && (
                 <div>
                   <div className="form-label mb-1">Extra notes</div>
-                  <p className="text-primary" style={{ lineHeight: 1.65 }}>{job.checklist.extraNotes}</p>
+                  <p className="text-primary" style={{ lineHeight: 1.65 }}>{onChainData.notes}</p>
                 </div>
               )}
             </div>
@@ -388,10 +423,10 @@ export default function JobDetail() {
             </div>
           )}
           {/* ── Messages section ── */}
-          {isConnected && (isOwnJob || (job && job.assignedFreelancer && job.assignedFreelancer.toLowerCase() === address.toLowerCase()) || (viewerBid && !viewerBid.withdrawn) || (isFreelancerMode && isOpen && !viewerBid && !isOwnJob)) && (
+          {isConnected && address && (isOwnJob || job?.assignedFreelancer?.toLowerCase() === address.toLowerCase() || (viewerBid && !viewerBid.withdrawn) || (isFreelancerMode && isOpen && !viewerBid && !isOwnJob)) && (
             <div className="card">
               <h2 className="section-label mb-3">Messages</h2>
-              {(isOwnJob || (job && job.assignedFreelancer && job.assignedFreelancer.toLowerCase() === address.toLowerCase()) || (viewerBid && !viewerBid.withdrawn)) ? (
+              {(isOwnJob || job?.assignedFreelancer?.toLowerCase() === address.toLowerCase() || (viewerBid && !viewerBid.withdrawn)) ? (
                 <JobChat
                   jobId={jobId}
                   clientAddress={job.client}

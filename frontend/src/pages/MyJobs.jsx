@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useReadContract, useReadContracts, useAccount } from 'wagmi';
 import { formatEther } from 'viem';
 import {
@@ -12,6 +12,8 @@ import AmountDisplay from '../components/AmountDisplay.jsx';
 import AddressDisplay from '../components/AddressDisplay.jsx';
 import Button from '../components/Button.jsx';
 import SkeletonCard from '../components/SkeletonCard.jsx';
+import { bytes32ToCid } from '../utils/cid.js';
+import { parseOnChainNotes } from '../utils/cid.js';
 
 const JOB_STATE_LABELS = { 0: 'Open', 1: 'Assigned', 2: 'Completed' };
 const JOB_STATE_COLORS = {
@@ -42,6 +44,39 @@ function DashboardJobCard({ job, bids, latestMessageTime }) {
   const storageKey = `escrowmind_last_viewed_${String(job.jobId)}_${address?.toLowerCase()}`;
   const lastViewed = localStorage.getItem(storageKey);
   const isUnread = latestMessageTime && (!lastViewed || Number(lastViewed) < Number(latestMessageTime));
+
+  const [metadata, setMetadata] = useState(null);
+
+  useEffect(() => {
+    if (!job.specDocCID || job.specDocCID === '0x0000000000000000000000000000000000000000000000000000000000000000') return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
+        const res = await fetch(`${BACKEND_URL}/metadata/${job.specDocCID}`);
+        if (!res.ok) throw new Error('Failed to fetch');
+        const data = await res.json();
+        if (active) setMetadata(data);
+      } catch (err) {
+        console.error('Failed to fetch metadata in DashboardJobCard:', err);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [job.specDocCID]);
+
+  const getJobTitleLocal = (j) => {
+    const pages = j.checklist?.requiredPages ?? [];
+    if (pages.length > 0) return `Build ${pages.slice(0, 3).map((page) => `/${page}`).join(', ')}`;
+    return `Job #${String(j.jobId)}`;
+  };
+
+  const onChainData = useMemo(() => {
+    return parseOnChainNotes(job.checklist?.extraNotes || "", getJobTitleLocal(job));
+  }, [job]);
+
+  const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
+  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || '';
 
   return (
     <div className="card card-hover">
@@ -76,6 +111,16 @@ function DashboardJobCard({ job, bids, latestMessageTime }) {
         )}
       </div>
 
+      {/* Title */}
+      <h3 className="text-lg font-600 mb-2">{displayTitle}</h3>
+
+      {/* Description */}
+      {displayDescription && (
+        <p className="text-secondary text-sm mb-4" style={{ lineHeight: 1.6 }}>
+          {displayDescription}
+        </p>
+      )}
+
       {/* Required pages chips */}
       {job.checklist?.requiredPages?.length > 0 && (
         <div className="chip-row mb-4">
@@ -91,13 +136,6 @@ function DashboardJobCard({ job, bids, latestMessageTime }) {
           {job.checklist.mustBeResponsive && <span className="chip chip-teal">✓ Responsive</span>}
           {job.checklist.mustHaveContactForm && <span className="chip chip-teal">✓ Contact Form</span>}
         </div>
-      )}
-
-      {/* Extra notes */}
-      {job.checklist?.extraNotes && (
-        <p className="text-muted text-sm mb-4" style={{ fontStyle: 'italic' }}>
-          "{job.checklist.extraNotes}"
-        </p>
       )}
 
       {/* Stats row */}
@@ -229,7 +267,7 @@ export default function MyJobs() {
       return {
         client: res.client,
         checklist: normalizeChecklist(res.checklist),
-        specDocCID: res.specDocCID,
+        specDocCID: bytes32ToCid(res.specDocCID),
         budgetMin: res.budgetMin,
         budgetMax: res.budgetMax,
         deadline: res.deadline,
@@ -241,7 +279,7 @@ export default function MyJobs() {
     return {
       client: res[0],
       checklist: normalizeChecklist(res[1]),
-      specDocCID: res[2],
+      specDocCID: bytes32ToCid(res[2]),
       budgetMin: res[3],
       budgetMax: res[4],
       deadline: res[5],

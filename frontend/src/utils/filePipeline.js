@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
 
 /**
  * Packs multiple File objects into a single ZIP Blob.

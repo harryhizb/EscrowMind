@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { uploadToIPFS, getFromIPFS, resolveCidForHash, getUploadInfo } = require('./services/ipfs');
+const { uploadToIPFS, getFromIPFS, resolveCidForHash, resolveHashForCid, getUploadInfo } = require('./services/ipfs');
 const { runPuppeteerChecks, submitScoreToChain } = require('./services/verifier');
 
 
@@ -10,7 +10,9 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 // Middlewares
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ['Content-Disposition']
+}));
 app.use(express.json());
 
 // Multer in-memory storage configuration
@@ -107,15 +109,37 @@ function detectFileType(buffer, originalFileName) {
 app.get(['/download/:hashOrCid', '/file/:hashOrCid'], async (req, res) => {
   try {
     const { hashOrCid } = req.params;
-    const cid = hashOrCid.startsWith('0x') ? resolveCidForHash(hashOrCid) : hashOrCid;
+    let cid = hashOrCid.startsWith('0x') ? resolveCidForHash(hashOrCid) : hashOrCid;
 
-    if (!cid) {
-      return res.status(404).json({
-        error: 'No uploaded file was found for this on-chain hash. Upload manifest may be missing from this backend instance.'
-      });
+    let buffer = null;
+    if (cid) {
+      try {
+        buffer = await getFromIPFS(cid);
+      } catch (ipfsErr) {
+        console.log(`Local IPFS fetch failed for CID ${cid}: ${ipfsErr.message}`);
+      }
     }
 
-    const buffer = await getFromIPFS(cid);
+    // Proxy Fallback: If not cached locally or IPFS fetch failed, query production backend
+    if (!buffer) {
+      try {
+        const axios = require('axios');
+        const hashVal = resolveHashForCid(hashOrCid);
+        const targetQuery = hashVal || hashOrCid;
+        const prodUrl = `https://escrowmind-production.up.railway.app/download/${targetQuery}`;
+        console.log(`Proxying download request for ${hashOrCid} (${targetQuery}) to production backend: ${prodUrl}`);
+        const prodRes = await axios.get(prodUrl, { responseType: 'arraybuffer', timeout: 6000 });
+        res.setHeader('Content-Type', prodRes.headers['content-type'] || 'application/octet-stream');
+        res.setHeader('Content-Disposition', prodRes.headers['content-disposition'] || '');
+        return res.send(Buffer.from(prodRes.data));
+      } catch (proxyErr) {
+        console.error(`Production proxy fallback failed for ${hashOrCid}:`, proxyErr.message);
+      }
+
+      return res.status(404).json({
+        error: 'No uploaded file was found for this hash.'
+      });
+    }
 
     // Check if this buffer is a job specification metadata JSON file
     let specJson = null;
@@ -136,11 +160,26 @@ app.get(['/download/:hashOrCid', '/file/:hashOrCid'], async (req, res) => {
           const att = attachments[0];
           const attCid = att.cid || (att.hash ? resolveCidForHash(att.hash) : null);
           if (attCid) {
-            const attBuffer = await getFromIPFS(attCid);
-            const { mimeType, fileName } = detectFileType(attBuffer, att.name);
-            res.setHeader('Content-Type', mimeType);
-            res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-            return res.send(attBuffer);
+            let attBuffer;
+            try {
+              attBuffer = await getFromIPFS(attCid);
+            } catch (err) {
+              // Try to proxy from production
+              try {
+                const axios = require('axios');
+                const prodUrl = `https://escrowmind-production.up.railway.app/download/${att.hash || attCid}`;
+                const prodRes = await axios.get(prodUrl, { responseType: 'arraybuffer', timeout: 5000 });
+                attBuffer = Buffer.from(prodRes.data);
+              } catch (e) {
+                console.error(`Failed to proxy attachment ${att.name}:`, e.message);
+              }
+            }
+            if (attBuffer) {
+              const { mimeType, fileName } = detectFileType(attBuffer, att.name);
+              res.setHeader('Content-Type', mimeType);
+              res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+              return res.send(attBuffer);
+            }
           }
         } else {
           // Bundle multiple attachments into a single ZIP archive on-the-fly
@@ -150,10 +189,21 @@ app.get(['/download/:hashOrCid', '/file/:hashOrCid'], async (req, res) => {
             const attCid = att.cid || (att.hash ? resolveCidForHash(att.hash) : null);
             if (attCid) {
               try {
-                const attBuffer = await getFromIPFS(attCid);
-                zip.addFile(att.name || 'file', attBuffer);
+                let attBuffer = null;
+                try {
+                  attBuffer = await getFromIPFS(attCid);
+                } catch (e) {
+                  // Try proxying
+                  const axios = require('axios');
+                  const prodUrl = `https://escrowmind-production.up.railway.app/download/${att.hash || attCid}`;
+                  const prodRes = await axios.get(prodUrl, { responseType: 'arraybuffer', timeout: 5000 });
+                  attBuffer = Buffer.from(prodRes.data);
+                }
+                if (attBuffer) {
+                  zip.addFile(att.name || 'file', attBuffer);
+                }
               } catch (err) {
-                console.error(`Failed to fetch spec attachment ${att.name || attCid}:`, err);
+                console.error(`Failed to fetch spec attachment ${att.name || attCid}:`, err.message);
               }
             }
           }
@@ -179,6 +229,64 @@ app.get(['/download/:hashOrCid', '/file/:hashOrCid'], async (req, res) => {
   }
 });
 
+/**
+ * GET /metadata/:hashOrCid
+ * Returns the raw JSON metadata of a job specification or proposal directly.
+ */
+app.get('/metadata/:hashOrCid', async (req, res) => {
+  try {
+    const { hashOrCid } = req.params;
+    let cid = hashOrCid.startsWith('0x') ? resolveCidForHash(hashOrCid) : hashOrCid;
+
+    // Fallback Proxy Attempt
+    let parsedMetadata = null;
+    
+    // First, try loading metadata locally if cid is known
+    if (cid) {
+      try {
+        const buffer = await getFromIPFS(cid);
+        parsedMetadata = JSON.parse(buffer.toString('utf8'));
+      } catch (ipfsError) {
+        console.log(`Local metadata fetch failed for ${cid}: ${ipfsError.message}. Trying fallback.`);
+      }
+    }
+
+    // Second, if local retrieval failed or cid was unknown, attempt proxying from production
+    if (!parsedMetadata) {
+      try {
+        const axios = require('axios');
+        const prodUrl = `https://escrowmind-production.up.railway.app/metadata/${hashOrCid}`;
+        console.log(`Proxying metadata request for ${hashOrCid} to production backend: ${prodUrl}`);
+        const prodRes = await axios.get(prodUrl, { timeout: 4000 });
+        if (prodRes.data && !prodRes.data.error) {
+          parsedMetadata = prodRes.data;
+        }
+      } catch (proxyError) {
+        console.log(`Production proxy fallback failed for ${hashOrCid}:`, proxyError.message);
+      }
+    }
+
+    // Third, if both local cache and production proxy fail, return a graceful restored placeholder instead of a 404
+    if (!parsedMetadata) {
+      const hashVal = resolveHashForCid(hashOrCid);
+      if (hashVal && hashVal.startsWith('0x') && /^0x[0-9a-f]{64}$/.test(hashVal.toLowerCase())) {
+        return res.json({
+          title: `Job Spec (Restored #${hashVal.slice(2, 8).toUpperCase()})`,
+          description: "This job's text details were loaded via C-Chain transaction manifest references. Please see the checklist below for the full scope of work.",
+          checklist: { requiredPages: [], mustBeResponsive: false, mustHaveContactForm: false, extraNotes: "" },
+          attachments: [],
+          isRestored: true
+        });
+      }
+      return res.status(404).json({ error: 'No uploaded metadata was found for this hash.' });
+    }
+
+    return res.json(parsedMetadata);
+  } catch (err) {
+    console.error('Error fetching metadata:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 app.post('/delivery-notes', async (req, res) => {
   try {

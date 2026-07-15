@@ -12,6 +12,7 @@ import { useNetworkGuard } from '../hooks/useNetworkGuard.js';
 import Notice from '../components/Notice.jsx';
 import Button from '../components/Button.jsx';
 import { uploadFiles } from '../utils/filePipeline.js';
+import { cidToBytes32 } from '../utils/cid.js';
 
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
@@ -205,14 +206,21 @@ export default function PostJob() {
       const specBlob = new Blob([JSON.stringify(specDocument, null, 2)], { type: 'application/json' });
       const specUpload = await uploadBlob(`job-spec-${Date.now()}.json`, specBlob);
       const deadlineTs = Math.floor(new Date(`${deadline}T23:59:59`).getTime() / 1000);
+      const specBytes32 = cidToBytes32(specUpload.cid);
+
+      const onChainNotes = JSON.stringify({
+        title: title.trim(),
+        description: description.trim(),
+        notes: extraNotes.trim()
+      });
 
       await writeContractAsync({
         address: getContractAddress('JobBoard'),
         abi: JOB_BOARD_ABI,
         functionName: 'postJob',
         args: [
-          [pages, mustBeResponsive, mustHaveContactForm, extraNotes.trim()],
-          specUpload.hash,
+          [pages, mustBeResponsive, mustHaveContactForm, onChainNotes],
+          specBytes32,
           parseEther(budgetMin),
           parseEther(budgetMax),
           deadlineTs,

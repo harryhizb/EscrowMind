@@ -18,6 +18,36 @@ if (!fs.existsSync(LOCAL_CACHE_DIR)) {
   fs.mkdirSync(LOCAL_CACHE_DIR, { recursive: true });
 }
 
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function encodeBase58(buffer) {
+  let x = BigInt('0x' + Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join(''));
+  let result = '';
+  while (x > 0n) {
+    const mod = x % 58n;
+    result = BASE58_ALPHABET[Number(mod)] + result;
+    x = x / 58n;
+  }
+  for (let i = 0; i < buffer.length && buffer[i] === 0; i++) {
+    result = '1' + result;
+  }
+  return result;
+}
+
+function decodeBase58(str) {
+  let result = 0n;
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    const index = BASE58_ALPHABET.indexOf(char);
+    if (index === -1) throw new Error('Invalid base58 character');
+    result = result * 58n + BigInt(index);
+  }
+  let hex = result.toString(16);
+  if (hex.length % 2 !== 0) hex = '0' + hex;
+  const bytes = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+  return bytes;
+}
+
 function readManifest() {
   if (!fs.existsSync(MANIFEST_PATH)) return {};
   try {
@@ -47,9 +77,8 @@ function resolveCidForHash(hash) {
   if (manifest[normalized]?.cid) return manifest[normalized].cid;
 
   if (/^0x[0-9a-f]{64}$/.test(normalized)) {
-    const mockCID = `QmMockIPFSCID${normalized.slice(2, 22)}`;
-    const cachePath = path.join(LOCAL_CACHE_DIR, `${mockCID}.zip`);
-    if (fs.existsSync(cachePath)) return mockCID;
+    const mockHex = "1220" + normalized.slice(2);
+    return encodeBase58(Buffer.from(mockHex, 'hex'));
   }
 
   return null;
@@ -117,8 +146,9 @@ async function uploadToIPFS(buffer, fileName) {
   }
 
   // Fallback / local caching path
-  // Deterministic mock CID based on hash
-  const mockCID = `QmMockIPFSCID${contentHash.slice(2, 22)}`;
+  // Deterministic mock CID based on hash (valid base58 CIDv0 format)
+  const mockHex = "1220" + contentHash.slice(2);
+  const mockCID = encodeBase58(Buffer.from(mockHex, 'hex'));
   const cachePath = path.join(LOCAL_CACHE_DIR, `${mockCID}.zip`);
   
   fs.writeFileSync(cachePath, buffer);
@@ -188,10 +218,25 @@ function getUploadInfo(hashOrCid) {
   return null;
 }
 
+function resolveHashForCid(cid) {
+  if (!cid || typeof cid !== 'string') return null;
+  if (cid.startsWith('0x')) return cid;
+  if (!cid.startsWith('Qm')) return null;
+  try {
+    const decoded = decodeBase58(cid);
+    const hex = Array.from(decoded).map(b => b.toString(16).padStart(2, '0')).join('');
+    if (hex.startsWith('1220') && hex.length === 68) {
+      return '0x' + hex.slice(4);
+    }
+  } catch (e) {}
+  return null;
+}
+
 module.exports = {
   uploadToIPFS,
   getFromIPFS,
   resolveCidForHash,
+  resolveHashForCid,
   getUploadInfo
 };
 

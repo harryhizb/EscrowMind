@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState.jsx';
 import AmountDisplay from '../components/AmountDisplay.jsx';
 import SkeletonCard from '../components/SkeletonCard.jsx';
 import Notice from '../components/Notice.jsx';
+import { bytes32ToCid } from '../utils/cid.js';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const JOB_STATE_LABELS = { 0: 'Open', 1: 'Assigned', 2: 'Closed' };
@@ -31,7 +32,7 @@ function normalizeJobResult(res) {
   return {
     client: isTuple ? res[0] : res.client,
     checklist: normalizeChecklist(isTuple ? res[1] : res.checklist),
-    specDocCID: isTuple ? res[2] : res.specDocCID,
+    specDocCID: bytes32ToCid(isTuple ? res[2] : res.specDocCID),
     budgetMin: isTuple ? res[3] : res.budgetMin,
     budgetMax: isTuple ? res[4] : res.budgetMax,
     deadline: isTuple ? res[5] : res.deadline,
@@ -47,7 +48,7 @@ function normalizeBid(bid, index) {
     index,
     freelancer: isTuple ? bid[0] : bid.freelancer,
     amount: isTuple ? bid[1] : bid.amount,
-    proposalCID: isTuple ? bid[2] : bid.proposalCID,
+    proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
     estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
     withdrawn: isTuple ? bid[4] : bid.withdrawn,
   };

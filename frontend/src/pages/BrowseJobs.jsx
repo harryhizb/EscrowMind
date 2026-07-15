@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { formatEther } from "viem";
 import {
@@ -12,6 +12,7 @@ import AmountDisplay from "../components/AmountDisplay.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import Notice from "../components/Notice.jsx";
 import SkeletonCard from "../components/SkeletonCard.jsx";
+import { bytes32ToCid, parseOnChainNotes } from "../utils/cid.js";
 
 const JOB_STATE_LABELS = { 0: "Open", 1: "Assigned", 2: "Closed" };
 
@@ -38,7 +39,7 @@ function normalizeJobResult(res) {
     return {
       client: res.client,
       checklist: normalizeChecklist(res.checklist),
-      specDocCID: res.specDocCID,
+      specDocCID: bytes32ToCid(res.specDocCID),
       budgetMin: res.budgetMin,
       budgetMax: res.budgetMax,
       deadline: res.deadline,
@@ -50,7 +51,7 @@ function normalizeJobResult(res) {
   return {
     client: res[0],
     checklist: normalizeChecklist(res[1]),
-    specDocCID: res[2],
+    specDocCID: bytes32ToCid(res[2]),
     budgetMin: res[3],
     budgetMax: res[4],
     deadline: res[5],
@@ -66,7 +67,7 @@ function normalizeBid(bid, index) {
     index,
     freelancer: isTuple ? bid[0] : bid.freelancer,
     amount: isTuple ? bid[1] : bid.amount,
-    proposalCID: isTuple ? bid[2] : bid.proposalCID,
+    proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
     estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
     withdrawn: isTuple ? bid[4] : bid.withdrawn,
   };
@@ -115,6 +116,35 @@ function JobCard({ job, address }) {
 
   const goToDetail = () => navigate(`/jobs/${String(job.jobId)}`);
 
+  const [metadata, setMetadata] = useState(null);
+
+  useEffect(() => {
+    if (!job.specDocCID || job.specDocCID === ZERO_BYTES32) return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "http://localhost:3001").replace(/\/$/, "");
+        const res = await fetch(`${BACKEND_URL}/metadata/${job.specDocCID}`);
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        if (active) {
+          setMetadata(data);
+        }
+      } catch (err) {
+        console.error("Failed to load metadata in card:", err);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [job.specDocCID]);
+
+  const onChainData = useMemo(() => {
+    return parseOnChainNotes(job.checklist?.extraNotes || "", getJobTitle(job));
+  }, [job]);
+
+  const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
+  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || "";
+
   return (
     <article
       className="card card-hover browse-job-card"
@@ -130,7 +160,7 @@ function JobCard({ job, address }) {
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0">
-          <div className="job-card-title truncate">{getJobTitle(job)}</div>
+          <div className="job-card-title truncate">{displayTitle}</div>
           <div className="text-xs font-mono text-muted mt-1">
             Client {String(job.client || "").slice(0, 8)}&hellip;{String(job.client || "").slice(-6)}
           </div>
@@ -146,9 +176,9 @@ function JobCard({ job, address }) {
         <AmountDisplay wei={job.budgetMax} size="sm" chip />
       </div>
 
-      {job.checklist?.extraNotes && (
+      {displayDescription && (
         <p className="job-card-desc text-sm text-secondary mb-3 truncate">
-          {job.checklist.extraNotes}
+          {displayDescription}
         </p>
       )}
 

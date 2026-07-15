@@ -18,8 +18,9 @@ import Button from '../components/Button.jsx';
 import EmptyState from '../components/EmptyState.jsx';
 import SkeletonCard from '../components/SkeletonCard.jsx';
 import { downloadFile } from '../utils/filePipeline.js';
+import { bytes32ToCid } from '../utils/cid.js';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const JOB_STATE_LABELS = { 0: 'Open', 1: 'Assigned', 2: 'Closed' };
 const JOB_STATE_BADGES = { 0: 'badge-pending', 1: 'badge-delivered', 2: 'badge-released' };
@@ -43,7 +44,7 @@ function normalizeJobResult(res) {
   return {
     client: isTuple ? res[0] : res.client,
     checklist: normalizeChecklist(isTuple ? res[1] : res.checklist),
-    specDocCID: isTuple ? res[2] : res.specDocCID,
+    specDocCID: bytes32ToCid(isTuple ? res[2] : res.specDocCID),
     budgetMin: isTuple ? res[3] : res.budgetMin,
     budgetMax: isTuple ? res[4] : res.budgetMax,
     deadline: isTuple ? res[5] : res.deadline,
@@ -59,7 +60,7 @@ function normalizeBid(bid, index) {
     index,
     freelancer: isTuple ? bid[0] : bid.freelancer,
     amount: isTuple ? bid[1] : bid.amount,
-    proposalCID: isTuple ? bid[2] : bid.proposalCID,
+    proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
     estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
     withdrawn: isTuple ? bid[4] : bid.withdrawn,
   };
@@ -277,6 +278,30 @@ export default function ReviewBids() {
   const isOwner = !!address && !!job?.client && address.toLowerCase() === job.client.toLowerCase();
   const canAccept = isOwner && Number(job?.state) === 0 && canTransact;
 
+  const [metadata, setMetadata] = useState(null);
+
+  useEffect(() => {
+    if (!job?.specDocCID || job.specDocCID === '0x0000000000000000000000000000000000000000000000000000000000000000') return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
+        const res = await fetch(`${BACKEND_URL}/metadata/${job.specDocCID}`);
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        if (active) {
+          setMetadata(data);
+        }
+      } catch (err) {
+        console.error("Failed to load spec metadata in ReviewBids:", err);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [job?.specDocCID]);
+
+  const displayTitle = metadata?.title || getJobTitle(job, jobIdParam);
+
   useEffect(() => {
     if (!isSuccess) return;
     queryClient.invalidateQueries();
@@ -395,7 +420,7 @@ export default function ReviewBids() {
               <span className="text-xs text-dim">Job #{jobIdParam}</span>
             </div>
             <h1 className="page-title mb-1">Review Bids</h1>
-            <p className="page-subtitle">{getJobTitle(job, jobIdParam)}</p>
+            <p className="page-subtitle">{displayTitle}</p>
           </div>
           {Number(job?.state) === 1 && job?.escrowVault !== ZERO_ADDRESS && (
             <Button

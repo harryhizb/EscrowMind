@@ -12,6 +12,7 @@ import AddressDisplay from '../components/AddressDisplay.jsx';
 import Notice from '../components/Notice.jsx';
 import Button from '../components/Button.jsx';
 import SkeletonCard from '../components/SkeletonCard.jsx';
+import { bytes32ToCid } from '../utils/cid.js';
 
 const JOB_STATE_LABELS = { 0: 'Open', 1: 'Assigned', 2: 'Completed' };
 const JOB_STATE_BADGES = {
@@ -39,7 +40,7 @@ const normalizeJobResult = (res) => {
   return {
     client: isTuple ? res[0] : res.client,
     checklist: normalizeChecklist(isTuple ? res[1] : res.checklist),
-    specDocCID: isTuple ? res[2] : res.specDocCID,
+    specDocCID: bytes32ToCid(isTuple ? res[2] : res.specDocCID),
     budgetMin: isTuple ? res[3] : res.budgetMin,
     budgetMax: isTuple ? res[4] : res.budgetMax,
     deadline: isTuple ? res[5] : res.deadline,
@@ -49,6 +50,159 @@ const normalizeJobResult = (res) => {
   };
 };
 
+function MyBidCard({ entry, address, latestMessagesMap, canTransact, handleWithdraw, isLoading }) {
+  const navigate = useNavigate();
+  const jobStateNum = Number(entry.job.state);
+  const isAccepted = entry.job.assignedFreelancer?.toLowerCase() === address?.toLowerCase();
+  const hasVault =
+    entry.job.escrowVault &&
+    entry.job.escrowVault !== '0x0000000000000000000000000000000000000000';
+
+  // Determine bid status label + badge class
+  let bidStatusLabel = 'Pending';
+  let bidStatusBadge = 'badge badge-pending';
+  if (entry.withdrawn) {
+    bidStatusLabel = 'Withdrawn';
+    bidStatusBadge = 'badge badge-refunded';
+  } else if (jobStateNum !== 0) {
+    if (isAccepted) {
+      bidStatusLabel = 'Accepted';
+      bidStatusBadge = 'badge badge-released';
+    } else {
+      bidStatusLabel = 'Rejected';
+      bidStatusBadge = 'badge badge-refunded';
+    }
+  }
+
+  const latestMessageTime = latestMessagesMap[String(entry.job.jobId)];
+  const storageKey = `escrowmind_last_viewed_${String(entry.job.jobId)}_${address?.toLowerCase()}`;
+  const lastViewed = localStorage.getItem(storageKey);
+  const isUnread = latestMessageTime && (!lastViewed || Number(lastViewed) < Number(latestMessageTime));
+
+  const [metadata, setMetadata] = useState(null);
+
+  useEffect(() => {
+    if (!entry.job.specDocCID || entry.job.specDocCID === '0x0000000000000000000000000000000000000000000000000000000000000000') return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
+        const res = await fetch(`${BACKEND_URL}/metadata/${entry.job.specDocCID}`);
+        if (!res.ok) throw new Error('Failed to fetch');
+        const data = await res.json();
+        if (active) setMetadata(data);
+      } catch (err) {
+        console.error('Failed to fetch metadata in MyBidCard:', err);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [entry.job.specDocCID]);
+
+  const getJobTitleLocal = (j) => {
+    const pages = j.checklist?.requiredPages ?? [];
+    if (pages.length > 0) return `Build ${pages.slice(0, 3).map((page) => `/${page}`).join(', ')}`;
+    return `Job #${String(j.jobId)}`;
+  };
+
+  const displayTitle = metadata?.title || getJobTitleLocal(entry.job);
+
+  const JOB_STATE_LABELS = { 0: 'Open', 1: 'Assigned', 2: 'Completed' };
+  const JOB_STATE_BADGES = { 0: 'badge-pending', 1: 'badge-delivered', 2: 'badge-released' };
+
+  return (
+    <div
+      className="card card-hover"
+      style={entry.withdrawn ? { opacity: 0.6 } : undefined}
+    >
+      {/* Card header row */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-700">Job</span>
+          <span className="mini-chip font-mono">#{String(entry.job.jobId)}</span>
+          {isUnread && (
+            <span 
+              className="chip chip-teal animate-pulse" 
+              style={{ 
+                background: 'var(--accent-primary)', 
+                color: 'white', 
+                padding: '2px 6px', 
+                fontSize: '10px', 
+                borderRadius: '10px', 
+                boxShadow: '0 0 8px var(--accent-primary)' 
+              }}
+            >
+              New message
+            </span>
+          )}
+          <span className={`badge ${JOB_STATE_BADGES[jobStateNum] ?? 'badge-refunded'}`}>
+            {JOB_STATE_LABELS[jobStateNum] ?? 'Unknown'}
+          </span>
+        </div>
+        <span className={bidStatusBadge}>{bidStatusLabel}</span>
+      </div>
+
+      {/* Title */}
+      <h3 className="text-lg font-600 mb-4">{displayTitle}</h3>
+
+      {/* Main content */}
+      <div className="flex justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-4" style={{ flex: '1 1 300px' }}>
+          {/* Bid amount */}
+          <div>
+            <div className="section-label mb-2">Your Bid Amount</div>
+            <AmountDisplay wei={entry.amount} size="lg" chip />
+          </div>
+
+          {/* Meta chips */}
+          <div className="chip-row">
+            <span className="chip">{String(entry.estimatedDays)} days</span>
+            {entry.proposalCID && (
+              <span className="mini-chip font-mono">
+                {entry.proposalCID.slice(0, 12)}…
+              </span>
+            )}
+          </div>
+
+          {/* Freelancer address */}
+          <AddressDisplay address={entry.freelancer} label="Freelancer:" />
+        </div>
+
+        {/* Actions column */}
+        <div className="flex flex-col gap-2" style={{ minWidth: 154 }}>
+          <Link
+            to={`/jobs/${String(entry.job.jobId)}`}
+            className="btn btn-outline btn-sm"
+          >
+            View Job <ChevronRight size={13} />
+          </Link>
+
+          {jobStateNum === 1 && isAccepted && hasVault && (
+            <Link
+              to={`/escrow/${entry.job.escrowVault}`}
+              className="btn btn-value btn-sm"
+            >
+              Escrow Vault <ExternalLink size={13} />
+            </Link>
+          )}
+
+          {jobStateNum === 0 && !entry.withdrawn && (
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={isLoading}
+              onClick={() => handleWithdraw(entry.job.jobId, entry.index)}
+              disabled={isLoading || !canTransact}
+            >
+              Withdraw Bid
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const normalizeBids = (result) => {
   if (!result) return [];
   return result.map((bid, index) => {
@@ -57,7 +211,7 @@ const normalizeBids = (result) => {
       index,
       freelancer: isTuple ? bid[0] : bid.freelancer,
       amount: isTuple ? bid[1] : bid.amount,
-      proposalCID: isTuple ? bid[2] : bid.proposalCID,
+      proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
       estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
       withdrawn: isTuple ? bid[4] : bid.withdrawn,
     };
@@ -247,124 +401,17 @@ export default function MyBids() {
       {/* Bids list */}
       {!pageLoading && myBids.length > 0 && (
         <div className="flex flex-col" style={{ gap: '1rem' }}>
-          {myBids.map((entry) => {
-            const jobStateNum = Number(entry.job.state);
-            const isAccepted = entry.job.assignedFreelancer?.toLowerCase() === address?.toLowerCase();
-            const hasVault =
-              entry.job.escrowVault &&
-              entry.job.escrowVault !== '0x0000000000000000000000000000000000000000';
-
-            // Determine bid status label + badge class
-            let bidStatusLabel = 'Pending';
-            let bidStatusBadge = 'badge badge-pending';
-            if (entry.withdrawn) {
-              bidStatusLabel = 'Withdrawn';
-              bidStatusBadge = 'badge badge-refunded';
-            } else if (jobStateNum !== 0) {
-              if (isAccepted) {
-                bidStatusLabel = 'Accepted';
-                bidStatusBadge = 'badge badge-released';
-              } else {
-                bidStatusLabel = 'Rejected';
-                bidStatusBadge = 'badge badge-refunded';
-              }
-            }
-
-            const latestMessageTime = latestMessagesMap[String(entry.job.jobId)];
-            const storageKey = `escrowmind_last_viewed_${String(entry.job.jobId)}_${address?.toLowerCase()}`;
-            const lastViewed = localStorage.getItem(storageKey);
-            const isUnread = latestMessageTime && (!lastViewed || Number(lastViewed) < Number(latestMessageTime));
-
-            return (
-              <div
-                key={`${String(entry.job.jobId)}-${entry.index}`}
-                className="card card-hover"
-                style={entry.withdrawn ? { opacity: 0.6 } : undefined}
-              >
-                {/* Card header row */}
-                <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-700">Job</span>
-                    <span className="mini-chip font-mono">#{String(entry.job.jobId)}</span>
-                    {isUnread && (
-                      <span 
-                        className="chip chip-teal animate-pulse" 
-                        style={{ 
-                          background: 'var(--accent-primary)', 
-                          color: 'white', 
-                          padding: '2px 6px', 
-                          fontSize: '10px', 
-                          borderRadius: '10px', 
-                          boxShadow: '0 0 8px var(--accent-primary)' 
-                        }}
-                      >
-                        New message
-                      </span>
-                    )}
-                    <span className={`badge ${JOB_STATE_BADGES[jobStateNum] ?? 'badge-refunded'}`}>
-                      {JOB_STATE_LABELS[jobStateNum] ?? 'Unknown'}
-                    </span>
-                  </div>
-                  <span className={bidStatusBadge}>{bidStatusLabel}</span>
-                </div>
-
-                {/* Main content */}
-                <div className="flex justify-between gap-4 flex-wrap">
-                  <div className="flex flex-col gap-4" style={{ flex: '1 1 300px' }}>
-                    {/* Bid amount */}
-                    <div>
-                      <div className="section-label mb-2">Your Bid Amount</div>
-                      <AmountDisplay wei={entry.amount} size="lg" chip />
-                    </div>
-
-                    {/* Meta chips */}
-                    <div className="chip-row">
-                      <span className="chip">{String(entry.estimatedDays)} days</span>
-                      {entry.proposalCID && (
-                        <span className="mini-chip font-mono">
-                          {entry.proposalCID.slice(0, 12)}…
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Freelancer address */}
-                    <AddressDisplay address={entry.freelancer} label="Freelancer:" />
-                  </div>
-
-                  {/* Actions column */}
-                  <div className="flex flex-col gap-2" style={{ minWidth: 154 }}>
-                    <Link
-                      to={`/jobs/${String(entry.job.jobId)}`}
-                      className="btn btn-outline btn-sm"
-                    >
-                      View Job <ChevronRight size={13} />
-                    </Link>
-
-                    {jobStateNum === 1 && isAccepted && hasVault && (
-                      <Link
-                        to={`/escrow/${entry.job.escrowVault}`}
-                        className="btn btn-value btn-sm"
-                      >
-                        Escrow Vault <ExternalLink size={13} />
-                      </Link>
-                    )}
-
-                    {jobStateNum === 0 && !entry.withdrawn && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        loading={isLoading}
-                        onClick={() => handleWithdraw(entry.job.jobId, entry.index)}
-                        disabled={isLoading || !canTransact}
-                      >
-                        Withdraw Bid
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {myBids.map((entry) => (
+            <MyBidCard
+              key={`${String(entry.job.jobId)}-${entry.index}`}
+              entry={entry}
+              address={address}
+              latestMessagesMap={latestMessagesMap}
+              canTransact={canTransact}
+              handleWithdraw={handleWithdraw}
+              isLoading={isLoading}
+            />
+          ))}
         </div>
       )}
     </div>

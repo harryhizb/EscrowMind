@@ -17,9 +17,10 @@ import Notice from '../components/Notice.jsx';
 import SkeletonCard from '../components/SkeletonCard.jsx';
 import Button from '../components/Button.jsx';
 import { uploadFiles, downloadFile } from '../utils/filePipeline.js';
+import { bytes32ToCid, cidToBytes32 } from '../utils/cid.js';
 
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
 const ZERO_BYTES32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 function normalizeChecklist(checklist) {
@@ -41,7 +42,7 @@ function normalizeJobResult(res) {
   return {
     client: isTuple ? res[0] : res.client,
     checklist: normalizeChecklist(isTuple ? res[1] : res.checklist),
-    specDocCID: isTuple ? res[2] : res.specDocCID,
+    specDocCID: bytes32ToCid(isTuple ? res[2] : res.specDocCID),
     budgetMin: isTuple ? res[3] : res.budgetMin,
     budgetMax: isTuple ? res[4] : res.budgetMax,
     deadline: isTuple ? res[5] : res.deadline,
@@ -57,7 +58,7 @@ function normalizeBid(bid, index) {
     index,
     freelancer: isTuple ? bid[0] : bid.freelancer,
     amount: isTuple ? bid[1] : bid.amount,
-    proposalCID: isTuple ? bid[2] : bid.proposalCID,
+    proposalCID: bytes32ToCid(isTuple ? bid[2] : bid.proposalCID),
     estimatedDays: isTuple ? bid[3] : bid.estimatedDays,
     withdrawn: isTuple ? bid[4] : bid.withdrawn,
   };
@@ -162,6 +163,29 @@ export default function ProposalPage() {
     (bid) => address && bid.freelancer?.toLowerCase() === address.toLowerCase()
   );
   const isOwnJob = !!address && !!job?.client && job.client.toLowerCase() === address.toLowerCase();
+
+  const [metadata, setMetadata] = useState(null);
+
+  useEffect(() => {
+    if (!job?.specDocCID || job.specDocCID === ZERO_BYTES32) return;
+    let active = true;
+    const fetchMetadata = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/metadata/${job.specDocCID}`);
+        if (!res.ok) throw new Error("Failed to fetch");
+        const data = await res.json();
+        if (active) {
+          setMetadata(data);
+        }
+      } catch (err) {
+        console.error("Failed to load spec metadata in ProposalPage:", err);
+      }
+    };
+    fetchMetadata();
+    return () => { active = false; };
+  }, [job?.specDocCID]);
+
+  const displayTitle = metadata?.title || getJobTitle(job, jobId);
   const cost = bidCost !== undefined ? Number(bidCost) : 1;
   const balance = creditBalance !== undefined ? Number(creditBalance) : 0;
   const hasEnoughCredits = balance >= cost;
@@ -257,13 +281,14 @@ export default function ProposalPage() {
         type: 'application/json',
       });
       const proposalUpload = await uploadBlob(`proposal-job-${jobId}-${Date.now()}.json`, proposalBlob);
+      const proposalBytes32 = cidToBytes32(proposalUpload.cid);
 
       setStatus('Waiting for wallet confirmation...');
       await writeContractAsync({
         address: jobBoardAddress,
         abi: JOB_BOARD_ABI,
         functionName: 'submitBid',
-        args: [parsedJobId, parseEther(amount), proposalUpload.hash, Number(estimatedDays)],
+        args: [parsedJobId, parseEther(amount), proposalBytes32, Number(estimatedDays)],
       });
       setStatus('Transaction submitted. Waiting for confirmation...');
     } catch (error) {
@@ -328,7 +353,7 @@ export default function ProposalPage() {
       <div className="page-header" style={{ marginBottom: '1.5rem' }}>
         <div>
           <h1 className="page-title">Submit Proposal</h1>
-          <p className="page-subtitle">{getJobTitle(job, jobId)}</p>
+          <p className="page-subtitle">{displayTitle}</p>
         </div>
       </div>
 

@@ -14,7 +14,7 @@ import SkeletonCard from '../components/SkeletonCard.jsx';
 import { uploadFiles, downloadFile } from '../utils/filePipeline.js';
 import JobChat from '../components/JobChat.jsx';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001').replace(/\/$/, '');
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 function VerificationReport({ logs }) {
