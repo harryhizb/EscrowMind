@@ -189,8 +189,8 @@ export default function LandingPage() {
             </div>
             
             <h1 className="hero-h1">
-              Decentralized freelance escrow.<br />
-              Trustless <span className="highlight">code-verified</span> payouts.
+              <span className="hero-h1-line">Decentralized freelance escrow.</span>
+              <span className="hero-h1-line">Trustless <span className="highlight">code-verified</span> payouts.</span>
             </h1>
             
             <p className="hero-sub">

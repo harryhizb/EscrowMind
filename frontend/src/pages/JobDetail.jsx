@@ -193,7 +193,9 @@ export default function JobDetail() {
   }, [job, jobId]);
 
   const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
-  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || "No extra written description was stored for this job. The structured checklist below is the source of truth.";
+  const displayDescription = (metadata && !metadata.isRestored)
+    ? metadata.description
+    : (onChainData.description || onChainData.notes || metadata?.description || "No extra written description was stored for this job. The structured checklist below is the source of truth.");
 
   /* ── Invalid ID ── */
   if (parsedJobId === null) {

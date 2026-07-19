@@ -76,7 +76,9 @@ function DashboardJobCard({ job, bids, latestMessageTime }) {
   }, [job]);
 
   const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
-  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || '';
+  const displayDescription = (metadata && !metadata.isRestored)
+    ? metadata.description
+    : (onChainData.description || onChainData.notes || metadata?.description || '');
 
   return (
     <div className="card card-hover">

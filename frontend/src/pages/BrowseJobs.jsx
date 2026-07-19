@@ -143,7 +143,9 @@ function JobCard({ job, address }) {
   }, [job]);
 
   const displayTitle = (metadata && !metadata.isRestored) ? metadata.title : onChainData.title;
-  const displayDescription = metadata?.description || onChainData.description || onChainData.notes || "";
+  const displayDescription = (metadata && !metadata.isRestored)
+    ? metadata.description
+    : (onChainData.description || onChainData.notes || metadata?.description || "");
 
   return (
     <article
